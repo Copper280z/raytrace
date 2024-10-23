@@ -26,12 +26,13 @@ const HitRecord = struct {
     t: f32,
     p: vec_type,
     normal: vec_type,
+    material: Material,
 };
 
 const Sphere = struct {
     center: vec_type,
     radius: f32,
-
+    material: Material,
     pub fn hit(
         sphere: Sphere,
         r: Ray,
@@ -51,6 +52,7 @@ const Sphere = struct {
                     .t = temp,
                     .p = point,
                     .normal = (point - sphere.center) / vec3f.Splat(sphere.radius),
+                    .material = sphere.material,
                 };
                 return rec;
             }
@@ -61,6 +63,7 @@ const Sphere = struct {
                     .t = temp_n,
                     .p = point,
                     .normal = (point - sphere.center) / vec3f.Splat(sphere.radius),
+                    .material = sphere.material,
                 };
                 return rec;
             }
@@ -98,14 +101,57 @@ pub fn HittableList(T: anytype) type {
     };
 }
 
-pub fn Render(loop_func: anytype, shape: shape_s, allocator: Allocator, rnd: anytype) !std.ArrayList(@Vector(3, u8)) {
+const ScatterResult = struct {
+    attenuation: vec_type,
+    ray: Ray,
+};
+
+const Material = union(enum) {
+    metal: Metal,
+    lambertian: Lambertian,
+    glass: Metal,
+    pub fn scatter(self: @This(), r_in: Ray, rec: HitRecord, rng: std.Random) ?ScatterResult {
+        const result = switch (self) {
+            .metal => self.metal.scatter(r_in, rec, rng),
+            .lambertian => self.lambertian.scatter(r_in, rec, rng),
+            else => null,
+        };
+        return result;
+    }
+};
+
+const Metal = struct {
+    albedo: vec_type,
+    fn reflect(v: vec_type, n: vec_type) vec_type {
+        return v - vec3f.Splat(2.0) * vec3f.Splat(vec3f.dot(v, n)) * n;
+    }
+    pub fn scatter(self: @This(), r_in: Ray, rec: HitRecord, rng: std.Random) ScatterResult {
+        _ = rng;
+        const reflected = reflect(vec3f.normalize(r_in.direction), rec.normal);
+        const scattered: Ray = .{ .origin = rec.p, .direction = reflected };
+        return .{ .attenuation = self.albedo, .ray = scattered };
+    }
+};
+
+const Lambertian = struct {
+    albedo: vec_type,
+    pub fn scatter(self: @This(), r_in: Ray, rec: HitRecord, rng: anytype) ScatterResult {
+        _ = r_in;
+        const target = rec.p + rec.normal + random_in_unit_sphere(rng);
+        const scattered: Ray = .{ .origin = rec.p, .direction = target - rec.p };
+
+        return .{ .attenuation = self.albedo, .ray = scattered };
+    }
+};
+
+pub fn Render(loop_func: anytype, shape: shape_s, allocator: Allocator, rng: anytype) !std.ArrayList(@Vector(3, u8)) {
     @setFloatMode(.optimized);
     var img = try std.ArrayList(@Vector(3, u8)).initCapacity(allocator, shape.nx * shape.ny);
     log.info("Starting ray trace", .{});
     for (0..shape.ny) |jr| {
         for (0..shape.nx) |i| {
             const j = shape.ny - jr;
-            const pix = loop_func(i, j, shape, rnd);
+            const pix = loop_func(i, j, shape, rng);
             const ipix: @Vector(3, u8) = @intFromFloat(@as(vec_type, @splat(255.99)) * pix);
             img.appendAssumeCapacity(ipix);
         }
@@ -120,23 +166,29 @@ pub fn random_in_unit_sphere(rng: anytype) vec_type {
 }
 
 pub fn make_diffuse_surfs() type {
-    const list: [2]Sphere = .{
-        .{ .center = vec_type{ 0.0, 0.0, -1.0 }, .radius = 0.5 },
-        .{ .center = vec_type{ 0.0, -100.5, -1.0 }, .radius = 100 },
+    const list: [4]Sphere = .{
+        .{ .center = vec_type{ 0.0, 0.0, -1.0 }, .radius = 0.5, .material = .{ .lambertian = .{ .albedo = .{ 0.8, 0.3, 0.3 } } } },
+        .{ .center = vec_type{ 0.0, -100.5, -1.0 }, .radius = 100, .material = .{ .lambertian = .{ .albedo = .{ 0.8, 0.8, 0.0 } } } },
+        .{ .center = vec_type{ 1.0, 0.0, -1.0 }, .radius = 0.5, .material = .{ .metal = .{ .albedo = .{ 0.8, 0.6, 0.2 } } } },
+        .{ .center = vec_type{ -1.0, 0.0, -1.0 }, .radius = 0.5, .material = .{ .metal = .{ .albedo = .{ 0.8, 0.8, 0.8 } } } },
     };
     const Hittable = HittableList(@TypeOf(list));
 
     const hittable_objects = Hittable{ .objects = list[0..] };
     const cam = cam_types.BasicCamera{};
     const num_samples = 256;
+    // const depth_limit = 50;
     return struct {
-        pub fn render(i: usize, j: usize, shape: shape_s, rnd: anytype) vec_type {
+        pub fn render(i: usize, j: usize, shape: shape_s, rng: anytype) vec_type {
             const fns = struct {
-                fn color(r: Ray, world: Hittable, rng: anytype) vec_type {
+                fn color(r: Ray, world: Hittable, depth: u16, rnd: std.Random) vec_type {
                     if (world.hit(r, 0.001, std.math.floatMax(f32))) |rec| {
-                        const target = rec.p + rec.normal + random_in_unit_sphere(rng);
-                        const new_ray = Ray{ .origin = rec.p, .direction = target - rec.p };
-                        return vec3f.Splat(0.5) * color(new_ray, world, rng);
+                        if (depth > 50) {
+                            return vec3f.Splat(0.0);
+                        }
+                        if (Material.scatter(rec.material, r, rec, rnd)) |scatter_res| {
+                            return scatter_res.attenuation * color(scatter_res.ray, world, depth + 1, rnd);
+                        }
                     }
                     const unit_dir = vec3f.normalize(r.direction);
                     const t = 0.5 * (unit_dir[1] + 1.0);
@@ -145,10 +197,10 @@ pub fn make_diffuse_surfs() type {
             };
             var col: vec_type = .{ 0.0, 0.0, 0.0 };
             for (0..num_samples) |_| {
-                const u: f32 = (@as(f32, @floatFromInt(i)) + rnd.float(f32)) / @as(f32, @floatFromInt(shape.nx));
-                const v: f32 = (@as(f32, @floatFromInt(j)) + rnd.float(f32)) / @as(f32, @floatFromInt(shape.ny));
+                const u: f32 = (@as(f32, @floatFromInt(i)) + rng.float(f32)) / @as(f32, @floatFromInt(shape.nx));
+                const v: f32 = (@as(f32, @floatFromInt(j)) + rng.float(f32)) / @as(f32, @floatFromInt(shape.ny));
                 const r = cam.get_ray(u, v);
-                col += fns.color(r, hittable_objects, rnd);
+                col += fns.color(r, hittable_objects, 0, rng);
             }
             const pix = col / vec3f.Splat(num_samples);
             const rt_pix = vec_type{
@@ -168,7 +220,7 @@ pub fn render_and_write(fname: []const u8, render_func: anytype, shape: shape_s,
     defer img.deinit();
     const t1 = std.time.milliTimestamp();
 
-    std.debug.print("Took {d:.3} sec to render", .{@as(f32, @floatFromInt(t1 - t0)) / 1000});
+    std.debug.print("Took {d:.3} sec to render\n", .{@as(f32, @floatFromInt(t1 - t0)) / 1000});
     switch (filetype) {
         .ppm => {
             try img_io.write_ppm_image(fname, .{ .arr = img, .nx = shape.nx, .ny = shape.ny });
@@ -199,5 +251,5 @@ pub fn main() !void {
     // try render_and_write("surface_normals.ppm", .{ .nx = nx, .ny = ny }, surface_normals, arena.allocator());
     // try render_and_write("multiple_spheres.ppm", .{ .nx = nx, .ny = ny }, multisphere.render, arena.allocator());
     // try render_and_write("antialiasing.ppm", .{ .nx = nx, .ny = ny }, antialiasing.render, arena.allocator());
-    try render_and_write("diffuse.ppm", diffuse.render, .{ .nx = nx, .ny = ny }, filetype, arena.allocator());
+    try render_and_write("reflective.ppm", diffuse.render, .{ .nx = nx, .ny = ny }, filetype, arena.allocator());
 }
