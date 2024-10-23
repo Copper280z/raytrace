@@ -7,20 +7,23 @@ pub fn Vector(vec_type: type) type {
             return @reduce(.Add, v);
         }
 
-        pub fn length(v: vec_type) @TypeOf(v[0]) {
-            const v_out = std.math.sqrt(sum(v * v));
+        pub inline fn length(v: vec_type) @TypeOf(v[0]) {
+            const v_out = std.math.sqrt(length_squared(v));
             return v_out;
         }
-
-        pub fn normalize(v: vec_type) @TypeOf(v) {
-            return v / @as(@TypeOf(v), @splat(length(v)));
+        pub inline fn length_squared(v: vec_type) @TypeOf(v[0]) {
+            const v_out = sum(v * v);
+            return v_out;
+        }
+        pub inline fn normalize(v: vec_type) @TypeOf(v) {
+            return v / Splat(length(v));
         }
 
         pub fn dot(a: vec_type, b: vec_type) @TypeOf(a[0]) {
             return sum(a * b);
         }
 
-        pub fn cross(a: vec_type, b: vec_type) @TypeOf(a) {
+        pub inline fn cross(a: vec_type, b: vec_type) @TypeOf(a) {
             const elem_type = @TypeOf(a[0]);
             return @Vector(3, elem_type){
                 a[1] * b[2] - a[2] * b[1],
