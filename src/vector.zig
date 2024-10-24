@@ -34,6 +34,9 @@ pub fn Vector(vec_type: type) type {
         pub inline fn Splat(val: anytype) vec_type {
             return @as(vec_type, @splat(val));
         }
+        pub inline fn elem_sqrt(v: vec_type) vec_type {
+            return vec_type{ std.math.sqrt(v[0]), std.math.sqrt(v[1]), std.math.sqrt(v[2]) };
+        }
     };
 }
 

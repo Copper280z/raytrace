@@ -109,12 +109,13 @@ const ScatterResult = struct {
 const Material = union(enum) {
     metal: Metal,
     lambertian: Lambertian,
-    glass: Metal,
+    dielectric: Dielectric,
+
     pub fn scatter(self: @This(), r_in: Ray, rec: HitRecord, rng: std.Random) ?ScatterResult {
         const result = switch (self) {
             .metal => self.metal.scatter(r_in, rec, rng),
             .lambertian => self.lambertian.scatter(r_in, rec, rng),
-            else => null,
+            .dielectric => self.dielectric.scatter(r_in, rec, rng),
         };
         return result;
     }
@@ -122,14 +123,19 @@ const Material = union(enum) {
 
 const Metal = struct {
     albedo: vec_type,
+    roughness: f32,
     fn reflect(v: vec_type, n: vec_type) vec_type {
         return v - vec3f.Splat(2.0) * vec3f.Splat(vec3f.dot(v, n)) * n;
     }
-    pub fn scatter(self: @This(), r_in: Ray, rec: HitRecord, rng: std.Random) ScatterResult {
-        _ = rng;
+    pub fn scatter(self: @This(), r_in: Ray, rec: HitRecord, rng: std.Random) ?ScatterResult {
         const reflected = reflect(vec3f.normalize(r_in.direction), rec.normal);
-        const scattered: Ray = .{ .origin = rec.p, .direction = reflected };
-        return .{ .attenuation = self.albedo, .ray = scattered };
+        const scattered: Ray = .{ .origin = rec.p, .direction = reflected + vec3f.Splat(self.roughness) * random_in_unit_sphere(rng) };
+
+        if (vec3f.dot(scattered.direction, rec.normal) > 0) {
+            return .{ .attenuation = self.albedo, .ray = scattered };
+        } else {
+            return null;
+        }
     }
 };
 
@@ -141,6 +147,59 @@ const Lambertian = struct {
         const scattered: Ray = .{ .origin = rec.p, .direction = target - rec.p };
 
         return .{ .attenuation = self.albedo, .ray = scattered };
+    }
+};
+const Dielectric = struct {
+    color: vec_type,
+    index: f32,
+    fn reflect(v: vec_type, n: vec_type) vec_type {
+        return v - vec3f.Splat(2.0) * vec3f.Splat(vec3f.dot(v, n)) * n;
+    }
+    fn refract(v: vec_type, n: vec_type, ni_nt: f32) ?vec_type {
+        const uv = vec3f.normalize(v);
+        const dt = vec3f.dot(uv, n);
+        const discriminant = 1.0 - ni_nt * ni_nt * (1.0 - (dt * dt));
+        if (discriminant > 0) {
+            const refracted = vec3f.Splat(ni_nt) * (uv - n * vec3f.Splat(dt)) - n * vec3f.Splat(std.math.sqrt(discriminant));
+            return refracted;
+        } else {
+            return null;
+        }
+    }
+    fn schlick(cos: f32, idx: f32) f32 {
+        var r0 = (1 - idx) / (1 + idx);
+        r0 = r0 * r0;
+        return r0 + (1 - r0) * std.math.pow(f32, 1 - cos, 5);
+    }
+    pub fn scatter(self: @This(), r_in: Ray, rec: HitRecord, rng: std.Random) ScatterResult {
+        var outward_normal: vec_type = undefined;
+        var ni_over_nt: f32 = undefined;
+        var cosine: f32 = undefined;
+        var reflect_prob: f32 = undefined;
+        var scattered: Ray = undefined;
+        const reflected = reflect(vec3f.normalize(r_in.direction), rec.normal);
+        if (vec3f.dot(r_in.direction, rec.normal) > 0) {
+            outward_normal = -rec.normal;
+            ni_over_nt = self.index;
+            cosine = self.index * vec3f.dot(r_in.direction, rec.normal) / vec3f.length(r_in.direction);
+        } else {
+            outward_normal = rec.normal;
+            ni_over_nt = 1.0 / self.index;
+            cosine = -vec3f.dot(r_in.direction, rec.normal) / vec3f.length(r_in.direction);
+        }
+        const refracted = refract(r_in.direction, outward_normal, ni_over_nt);
+        if (refracted != null) {
+            reflect_prob = schlick(cosine, self.index);
+        } else {
+            scattered = .{ .origin = rec.p, .direction = reflected };
+            reflect_prob = 1.0;
+        }
+        if (rng.float(f32) < reflect_prob) {
+            scattered = .{ .origin = rec.p, .direction = reflected };
+        } else {
+            scattered = .{ .origin = rec.p, .direction = refracted.? };
+        }
+        return .{ .attenuation = self.color, .ray = scattered };
     }
 };
 
@@ -166,17 +225,19 @@ pub fn random_in_unit_sphere(rng: anytype) vec_type {
 }
 
 pub fn make_diffuse_surfs() type {
-    const list: [4]Sphere = .{
-        .{ .center = vec_type{ 0.0, 0.0, -1.0 }, .radius = 0.5, .material = .{ .lambertian = .{ .albedo = .{ 0.8, 0.3, 0.3 } } } },
+    const list: [5]Sphere = .{
+        .{ .center = vec_type{ -1.0, 0.0, -1.0 }, .radius = 0.5, .material = .{ .lambertian = .{ .albedo = .{ 0.8, 0.3, 0.3 } } } },
         .{ .center = vec_type{ 0.0, -100.5, -1.0 }, .radius = 100, .material = .{ .lambertian = .{ .albedo = .{ 0.8, 0.8, 0.0 } } } },
-        .{ .center = vec_type{ 1.0, 0.0, -1.0 }, .radius = 0.5, .material = .{ .metal = .{ .albedo = .{ 0.8, 0.6, 0.2 } } } },
-        .{ .center = vec_type{ -1.0, 0.0, -1.0 }, .radius = 0.5, .material = .{ .metal = .{ .albedo = .{ 0.8, 0.8, 0.8 } } } },
+        .{ .center = vec_type{ 1.0, 0.0, -1.0 }, .radius = 0.5, .material = .{ .metal = .{ .albedo = .{ 0.8, 0.6, 0.2 }, .roughness = 0.15 } } },
+        // .{ .center = vec_type{ -1.0, 0.0, -1.0 }, .radius = 0.5, .material = .{ .metal = .{ .albedo = .{ 0.8, 0.8, 0.8 }, .roughness = 0.0 } } },
+        .{ .center = vec_type{ 0.0, 0.0, -1.0 }, .radius = 0.5, .material = .{ .dielectric = .{ .color = .{ 0.95, 0.95, 0.95 }, .index = 1.5 } } },
+        .{ .center = vec_type{ 0.0, 0.0, -1.0 }, .radius = -0.4, .material = .{ .dielectric = .{ .color = .{ 0.95, 0.95, 0.95 }, .index = 1.5 } } },
     };
     const Hittable = HittableList(@TypeOf(list));
 
     const hittable_objects = Hittable{ .objects = list[0..] };
-    const cam = cam_types.BasicCamera{};
-    const num_samples = 256;
+
+    const num_samples = 500;
     // const depth_limit = 50;
     return struct {
         pub fn render(i: usize, j: usize, shape: shape_s, rng: anytype) vec_type {
@@ -188,6 +249,8 @@ pub fn make_diffuse_surfs() type {
                         }
                         if (Material.scatter(rec.material, r, rec, rnd)) |scatter_res| {
                             return scatter_res.attenuation * color(scatter_res.ray, world, depth + 1, rnd);
+                        } else {
+                            return vec3f.Splat(0.0);
                         }
                     }
                     const unit_dir = vec3f.normalize(r.direction);
@@ -230,7 +293,7 @@ pub fn render_and_write(fname: []const u8, render_func: anytype, shape: shape_s,
         },
     }
 }
-
+var cam = cam_types.MovableCamera{};
 pub fn main() !void {
     const filetype = .ppm;
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -238,6 +301,8 @@ pub fn main() !void {
     const nx = 1024;
     const ny = 512;
     var arena = std.heap.ArenaAllocator.init(allocator);
+    cam.SetPosition(.{ -1.5, 1.0, 1.0 }, .{ 0.0, 0.0, -1.0 }, .{ 0.0, 1.0, 0.0 }, 75, 2.0);
+
     // var buf: [4096]u8 = undefined;
     // var fba = std.heap.FixedBufferAllocator.init(&buf);
 
