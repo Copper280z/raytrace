@@ -74,7 +74,7 @@ const Sphere = struct {
 
 pub fn HittableList(T: anytype) type {
     return struct {
-        objects: *const T,
+        objects: T,
 
         pub fn hit(
             self: @This(),
@@ -203,14 +203,14 @@ const Dielectric = struct {
     }
 };
 
-pub fn Render(loop_func: anytype, shape: shape_s, allocator: Allocator, rng: anytype) !std.ArrayList(@Vector(3, u8)) {
+pub fn Render(world: Hittable, shape: shape_s, allocator: Allocator, rng: anytype) !std.ArrayList(@Vector(3, u8)) {
     @setFloatMode(.optimized);
     var img = try std.ArrayList(@Vector(3, u8)).initCapacity(allocator, shape.nx * shape.ny);
     log.info("Starting ray trace", .{});
     for (0..shape.ny) |jr| {
         for (0..shape.nx) |i| {
             const j = shape.ny - jr;
-            const pix = loop_func(i, j, shape, rng);
+            const pix = trace(i, j, shape, rng, world);
             const ipix: @Vector(3, u8) = @intFromFloat(@as(vec_type, @splat(255.99)) * pix);
             img.appendAssumeCapacity(ipix);
         }
@@ -224,62 +224,10 @@ pub fn random_in_unit_sphere(rng: anytype) vec_type {
     return unit_sphere * vec3f.Splat(std.math.cbrt(rng.float(f32)));
 }
 
-pub fn make_diffuse_surfs() type {
-    const list: [5]Sphere = .{
-        .{ .center = vec_type{ -1.0, 0.0, -1.0 }, .radius = 0.5, .material = .{ .lambertian = .{ .albedo = .{ 0.8, 0.3, 0.3 } } } },
-        .{ .center = vec_type{ 0.0, -100.5, -1.0 }, .radius = 100, .material = .{ .lambertian = .{ .albedo = .{ 0.8, 0.8, 0.0 } } } },
-        .{ .center = vec_type{ 1.0, 0.0, -1.0 }, .radius = 0.5, .material = .{ .metal = .{ .albedo = .{ 0.8, 0.6, 0.2 }, .roughness = 0.15 } } },
-        // .{ .center = vec_type{ -1.0, 0.0, -1.0 }, .radius = 0.5, .material = .{ .metal = .{ .albedo = .{ 0.8, 0.8, 0.8 }, .roughness = 0.0 } } },
-        .{ .center = vec_type{ 0.0, 0.0, -1.0 }, .radius = 0.5, .material = .{ .dielectric = .{ .color = .{ 0.95, 0.95, 0.95 }, .index = 1.5 } } },
-        .{ .center = vec_type{ 0.0, 0.0, -1.0 }, .radius = -0.4, .material = .{ .dielectric = .{ .color = .{ 0.95, 0.95, 0.95 }, .index = 1.5 } } },
-    };
-    const Hittable = HittableList(@TypeOf(list));
-
-    const hittable_objects = Hittable{ .objects = list[0..] };
-
-    const num_samples = 500;
-    // const depth_limit = 50;
-    return struct {
-        pub fn render(i: usize, j: usize, shape: shape_s, rng: anytype) vec_type {
-            const fns = struct {
-                fn color(r: Ray, world: Hittable, depth: u16, rnd: std.Random) vec_type {
-                    if (world.hit(r, 0.001, std.math.floatMax(f32))) |rec| {
-                        if (depth > 50) {
-                            return vec3f.Splat(0.0);
-                        }
-                        if (Material.scatter(rec.material, r, rec, rnd)) |scatter_res| {
-                            return scatter_res.attenuation * color(scatter_res.ray, world, depth + 1, rnd);
-                        } else {
-                            return vec3f.Splat(0.0);
-                        }
-                    }
-                    const unit_dir = vec3f.normalize(r.direction);
-                    const t = 0.5 * (unit_dir[1] + 1.0);
-                    return vec3f.Splat(1.0 - t) * vec3f.Splat(1.0) + vec3f.Splat(t) * vec_type{ 0.5, 0.7, 1.0 };
-                }
-            };
-            var col: vec_type = .{ 0.0, 0.0, 0.0 };
-            for (0..num_samples) |_| {
-                const u: f32 = (@as(f32, @floatFromInt(i)) + rng.float(f32)) / @as(f32, @floatFromInt(shape.nx));
-                const v: f32 = (@as(f32, @floatFromInt(j)) + rng.float(f32)) / @as(f32, @floatFromInt(shape.ny));
-                const r = cam.get_ray(u, v);
-                col += fns.color(r, hittable_objects, 0, rng);
-            }
-            const pix = col / vec3f.Splat(num_samples);
-            const rt_pix = vec_type{
-                std.math.sqrt(pix[0]),
-                std.math.sqrt(pix[1]),
-                std.math.sqrt(pix[2]),
-            };
-            return rt_pix;
-        }
-    };
-}
-
-pub fn render_and_write(fname: []const u8, render_func: anytype, shape: shape_s, filetype: img_io.ImgType, allocator: Allocator) !void {
-    var rnd = RndGen.init(0);
+pub fn render_and_write(fname: []const u8, world: Hittable, shape: shape_s, filetype: img_io.ImgType, allocator: Allocator) !void {
+    var rnd = RndGen.init(456);
     const t0 = std.time.milliTimestamp();
-    const img = try Render(render_func, shape, allocator, rnd.random());
+    const img = try Render(world, shape, allocator, rnd.random());
     defer img.deinit();
     const t1 = std.time.milliTimestamp();
 
@@ -293,28 +241,104 @@ pub fn render_and_write(fname: []const u8, render_func: anytype, shape: shape_s,
         },
     }
 }
+
+fn color(r: Ray, world: Hittable, depth: u16, rnd: std.Random) vec_type {
+    if (world.hit(r, 0.001, std.math.floatMax(f32))) |rec| {
+        if (depth > 16) {
+            return vec3f.Splat(0.0);
+        }
+        if (Material.scatter(rec.material, r, rec, rnd)) |scatter_res| {
+            return scatter_res.attenuation * color(scatter_res.ray, world, depth + 1, rnd);
+        } else {
+            return vec3f.Splat(0.0);
+        }
+    }
+    const unit_dir = vec3f.normalize(r.direction);
+    const t = 0.5 * (unit_dir[1] + 1.0);
+    return vec3f.Splat(1.0 - t) * vec3f.Splat(1.0) + vec3f.Splat(t) * vec_type{ 0.5, 0.7, 1.0 };
+}
+pub fn trace(i: usize, j: usize, shape: shape_s, rng: anytype, world: Hittable) vec_type {
+    var col: vec_type = .{ 0.0, 0.0, 0.0 };
+    for (0..num_samples) |_| {
+        const u: f32 = (@as(f32, @floatFromInt(i)) + rng.float(f32)) / @as(f32, @floatFromInt(shape.nx));
+        const v: f32 = (@as(f32, @floatFromInt(j)) + rng.float(f32)) / @as(f32, @floatFromInt(shape.ny));
+        const r = cam.get_ray(u, v);
+        col += color(r, world, 0, rng);
+    }
+    const pix = col / vec3f.Splat(num_samples);
+    const rt_pix = vec_type{
+        std.math.sqrt(pix[0]),
+        std.math.sqrt(pix[1]),
+        std.math.sqrt(pix[2]),
+    };
+    return rt_pix;
+}
 var cam = cam_types.MovableCamera{};
+const Hittable = HittableList([]const Sphere);
+// const Hittable = HittableList(std.ArrayList(Sphere));
+const num_samples = 256;
+// const list: [5]Sphere = .{
+//     .{ .center = vec_type{ -1.0, 0.0, -1.0 }, .radius = 0.5, .material = .{ .lambertian = .{ .albedo = .{ 0.8, 0.3, 0.3 } } } },
+//     .{ .center = vec_type{ 0.0, -1000.5, -1.0 }, .radius = 1000, .material = .{ .lambertian = .{ .albedo = .{ 0.5, 0.5, 0.5 } } } },
+//     .{ .center = vec_type{ 1.0, 0.0, -1.0 }, .radius = 0.5, .material = .{ .metal = .{ .albedo = .{ 0.8, 0.6, 0.2 }, .roughness = 0.15 } } },
+//     // .{ .center = vec_type{ -1.0, 0.0, -1.0 }, .radius = 0.5, .material = .{ .metal = .{ .albedo = .{ 0.8, 0.8, 0.8 }, .roughness = 0.0 } } },
+//     .{ .center = vec_type{ 0.0, 0.0, -1.0 }, .radius = 0.5, .material = .{ .dielectric = .{ .color = .{ 0.95, 0.95, 0.95 }, .index = 5.5 } } },
+//     .{ .center = vec_type{ 0.0, 0.0, -1.0 }, .radius = -0.4, .material = .{ .dielectric = .{ .color = .{ 0.95, 0.95, 0.95 }, .index = 5.5 } } },
+// };
+
+pub fn Random_Scene(half_size: usize, rng: std.Random, allocator: std.mem.Allocator) !Hittable {
+    var list = std.ArrayList(Sphere).init(allocator);
+    for (0..2 * half_size) |A| {
+        for (0..2 * half_size) |B| {
+            const a: f32 = @as(f32, @floatFromInt(A)) - @as(f32, @floatFromInt(half_size));
+            const b: f32 = @as(f32, @floatFromInt(B)) - @as(f32, @floatFromInt(half_size));
+            const choose_mat: u8 = @intFromFloat(rng.float(f32) * 100);
+            const center: vec_type = .{ a + 0.9 * rng.float(f32), 0.2, b + 0.9 * rng.float(f32) };
+
+            if (vec3f.length(center - vec_type{ 4.0, 0.2, 0.0 }) > 0.9) {
+                const sphere: Sphere = switch (choose_mat) {
+                    0...70 => blk: { // Lambertian
+                        const albedo = vec3f.normalize(random_in_unit_sphere(rng)) * vec3f.Splat(rng.float(f32) * 0.5 + 0.5);
+                        break :blk .{ .center = center, .radius = 0.2, .material = .{ .lambertian = .{ .albedo = albedo } } };
+                    },
+                    71...90 => blk: { // Metal
+                        const albedo = vec3f.normalize(random_in_unit_sphere(rng)) * vec3f.Splat(rng.float(f32) * 0.5 + 0.5);
+                        break :blk .{ .center = center, .radius = 0.2, .material = .{ .metal = .{ .albedo = albedo, .roughness = 0.3 * rng.float(f32) } } };
+                    },
+                    91...95 => // Glass
+                    .{ .center = center, .radius = 0.2, .material = .{ .dielectric = .{ .color = vec3f.Splat(0.95), .index = 1.5 + 8.5 * rng.float(f32) } } },
+                    else => blk: { // Glass
+                        const rnd_index = rng.float(f32);
+                        const inside: Sphere = .{ .center = center, .radius = -0.15, .material = .{ .dielectric = .{ .color = vec3f.Splat(0.95), .index = 1.5 + 3.5 * rnd_index } } };
+                        try list.append(inside);
+                        break :blk .{ .center = center, .radius = 0.2, .material = .{ .dielectric = .{ .color = vec3f.Splat(0.95), .index = 1.5 + 3.5 * rnd_index } } };
+                    },
+                };
+                try list.append(sphere);
+            }
+        }
+    }
+    try list.append(.{ .center = vec_type{ 0.0, -1000, 0.0 }, .radius = 1000, .material = .{ .lambertian = .{ .albedo = .{ 0.5, 0.5, 0.4 } } } });
+    try list.append(.{ .center = vec_type{ 0.0, 1.0, 0.0 }, .radius = 1, .material = .{ .dielectric = .{ .color = .{ 1.0, 1.0, 1.0 }, .index = 1.5 } } });
+    try list.append(.{ .center = vec_type{ 4.0, 1.0, 0.0 }, .radius = 1, .material = .{ .metal = .{ .albedo = .{ 0.7, 0.6, 0.5 }, .roughness = 0.0 } } });
+    try list.append(.{ .center = vec_type{ -4.0, 1.0, 0.0 }, .radius = 1, .material = .{ .lambertian = .{ .albedo = .{ 0.4, 0.2, 0.1 } } } });
+
+    const World = Hittable{ .objects = try list.toOwnedSlice() };
+    return World;
+}
+
 pub fn main() !void {
     const filetype = .ppm;
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
-    const nx = 1024;
-    const ny = 512;
+    const nx = 640;
+    const ny = 320;
     var arena = std.heap.ArenaAllocator.init(allocator);
-    cam.SetPosition(.{ -1.5, 1.0, 1.0 }, .{ 0.0, 0.0, -1.0 }, .{ 0.0, 1.0, 0.0 }, 75, 2.0);
+    cam.SetPosition(.{ 13.0, 2.0, 3.0 }, .{ 0.0, 0.0, 0.0 }, .{ 0.0, 1.0, 0.0 }, 20, 16.0 / 9.0);
+    var rng = RndGen.init(0);
 
-    // var buf: [4096]u8 = undefined;
-    // var fba = std.heap.FixedBufferAllocator.init(&buf);
-
-    // const multisphere = make_multiple_spheres();
-    // const antialiasing = make_antialiasing();
-    const diffuse = make_diffuse_surfs();
-
+    // const World = Hittable{ .objects = list[0..] };
+    const World = try Random_Scene(11, rng.random(), arena.allocator());
     log.info("Creating {} x {} image", .{ nx, ny });
-    // try render_and_write("test_image.ppm", .{ .nx = nx, .ny = ny }, hello_graphics, arena.allocator());
-    // try render_and_write("my_first_raytrace.ppm", .{ .nx = nx, .ny = ny }, my_first_raytrace, arena.allocator());
-    // try render_and_write("surface_normals.ppm", .{ .nx = nx, .ny = ny }, surface_normals, arena.allocator());
-    // try render_and_write("multiple_spheres.ppm", .{ .nx = nx, .ny = ny }, multisphere.render, arena.allocator());
-    // try render_and_write("antialiasing.ppm", .{ .nx = nx, .ny = ny }, antialiasing.render, arena.allocator());
-    try render_and_write("reflective.ppm", diffuse.render, .{ .nx = nx, .ny = ny }, filetype, arena.allocator());
+    try render_and_write("Scene.ppm", World, .{ .nx = nx, .ny = ny }, filetype, arena.allocator());
 }
