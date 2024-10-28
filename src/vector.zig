@@ -37,6 +37,23 @@ pub fn Vector(vec_type: type) type {
         pub inline fn elem_sqrt(v: vec_type) vec_type {
             return vec_type{ std.math.sqrt(v[0]), std.math.sqrt(v[1]), std.math.sqrt(v[2]) };
         }
+        pub fn argmax(v: vec_type) u2 {
+            var arg_max: u2 = undefined;
+            if (v[0] > v[1]) {
+                if (v[0] > v[2]) {
+                    arg_max = 0;
+                } else {
+                    arg_max = 2;
+                }
+            } else {
+                if (v[1] > v[2]) {
+                    arg_max = 1;
+                } else {
+                    arg_max = 2;
+                }
+            }
+            return arg_max;
+        }
     };
 }
 
