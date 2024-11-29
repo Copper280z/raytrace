@@ -13,7 +13,8 @@ pub const Compute = struct {
     outputBuffer: zgpu.BufferHandle, // result of the computation, but can't be directly copied to host
     mapBuffer: zgpu.BufferHandle, // use this buffer to copy to host
 
-    done: bool = false,
+    compute_done: bool = false,
+    mapped: bool = false,
 
     pub fn create(gctx: *zgpu.GraphicsContext, allocator: std.mem.Allocator) !*Compute {
         const shader = try allocator.create(Compute);
@@ -134,7 +135,7 @@ pub const Compute = struct {
     }
 
     pub fn onCompute(self: *@This()) void {
-        self.done = false;
+        self.compute_done = false;
         // Initialize a command encoder
         const queue = self.gctx.device.getQueue();
         defer queue.release();
@@ -194,26 +195,41 @@ pub const Compute = struct {
         defer command.release();
         const commands: [1]wgpu.CommandBuffer = .{command};
         queue.submit(&commands);
+        queue.onSubmittedWorkDone(0, compute_done, @ptrCast(self));
+
+        while (!self.compute_done) {
+            self.gctx.device.tick();
+        }
 
         const mapBuffer: wgpu.Buffer = self.gctx.lookupResource(self.mapBuffer).?;
         mapBuffer.mapAsync(.{ .read = true }, 0, 0, print_callback, @ptrCast(self));
-        while (!self.done) {
+        while (!self.mapped) {
             self.gctx.device.tick();
         }
 
         std.debug.print("Buffer map state: {s}\n", .{@tagName(mapBuffer.getMapState())});
         std.debug.print("Buffer size: {}\n", .{mapBuffer.getSize()});
         std.debug.print("Buffer usage: {}\n", .{mapBuffer.getUsage()});
-        const result = mapBuffer.getConstMappedRange(f32, 0, self.bufferSize);
+        const result = mapBuffer.getMappedRange(f32, 0, self.bufferSize);
         if (result) |res| {
             std.debug.print("input: {} became {}\n", .{ 0.1, res[0] });
         } else {
             std.debug.print("GetMappedRange failed and returned null\n", .{});
         }
         mapBuffer.unmap();
+        self.mapped = false;
         // std.debug.print("done with onCompute\n", .{});
     }
 };
+
+fn compute_done(status: wgpu.QueueWorkDoneStatus, userdata: ?*anyopaque) callconv(.C) void {
+    const self = @as(*Compute, @ptrCast(@alignCast(userdata)));
+    self.compute_done = true;
+
+    if (status != .success) {
+        std.debug.print("Compute Failed to complete GPU work (status: {s}).", .{@tagName(status)});
+    }
+}
 
 fn print_callback(status: wgpu.BufferMapAsyncStatus, userdata: ?*anyopaque) callconv(.C) void {
     std.debug.print("Compute shader done! - status: {}\n", .{status});
@@ -227,5 +243,5 @@ fn print_callback(status: wgpu.BufferMapAsyncStatus, userdata: ?*anyopaque) call
     } else {
         std.debug.print("something went wrong with the compute shader\n", .{});
     }
-    self.done = true;
+    self.mapped = true;
 }

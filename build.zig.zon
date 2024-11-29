@@ -32,10 +32,10 @@
             .hash = "1220074231fcf6556b27e0ac6a3b22a19062c0c4bc3fd77c6fdcede15303af824c27",
         },
 
-        .zgpu = .{
-            .url = "https://github.com/zig-gamedev/zgpu/archive/44061500651ea5ef6d708527fe322e2e69e2e631.tar.gz",
-            .hash = "1220af0752814ec0a3438aa3ca3e33661885ec134c5e7b794247381b0fbe90c21012",
-        },
+        // .zgpu = .{
+        //     .url = "https://github.com/zig-gamedev/zgpu/archive/44061500651ea5ef6d708527fe322e2e69e2e631.tar.gz",
+        //     .hash = "1220af0752814ec0a3438aa3ca3e33661885ec134c5e7b794247381b0fbe90c21012",
+        // },
         .dawn_x86_64_windows_gnu = .{
             .url = "https://github.com/michal-z/webgpu_dawn-x86_64-windows-gnu/archive/d3a68014e6b6b53fd330a0ccba99e4dcfffddae5.tar.gz",
             .hash = "1220f9448cde02ef3cd51bde2e0850d4489daa0541571d748154e89c6eb46c76a267",
@@ -85,8 +85,10 @@
             .url = "https://github.com/zig-gamedev/ztracy/archive/4990324a1a724b59b8a561e521ab944e99ac6c28.tar.gz",
             .hash = "122058b9caf1299bcb723b8567999154b18d82e0e896471e10ef56b0e60c6dda59c2",
         },
-        // See `zig fetch --save <url>` for a command-line interface for adding dependencies.
-
+        .zgpu = .{
+            .url = "git+https://github.com/Copper280z/zgpu.git#ec04880155e55c2f9a3a5db46d8e9a4fa1d1f1f7",
+            .hash = "122002a1022eb159b5ae8c280d425bb3dde35f855c5e74e8c44d5950bf20ad96caa4",
+        },
     },
 
     // Specifies the set of files and directories that are included in this package.
