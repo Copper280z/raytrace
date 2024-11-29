@@ -318,7 +318,7 @@ fn update(demo: *DemoState) void {
 
         zgui.endGroup();
         zgui.beginGroup();
-        _ = zgui.button("Trace", .{ .w = 100, .h = 40 });
+        _ = zgui.button("Trace (not working)", .{ .w = 250, .h = 40 });
         zgui.endGroup();
     }
     zgui.end();

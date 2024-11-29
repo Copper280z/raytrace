@@ -45,26 +45,12 @@ pub const Compute = struct {
         };
 
         self.bindGroupLayout = self.gctx.createBindGroupLayout(&bindings);
-
-        // const bindGroupLayoutDesc = wgpu.BindGroupLayoutDescriptor{
-        //     .entry_count = bindings.len,
-        //     .entries = bindings,
-        // };
-
-        // self.bindGroupLayout = self.gctx.device.createBindGroupLayout(bindGroupLayoutDesc);
     }
 
     fn initComputePipeline(self: *@This()) void {
         // Load compute shader
         const computeShaderModule = zgpu.createWgslShaderModule(self.gctx.device, self.shader_source, "compute!");
         defer computeShaderModule.release();
-
-        // const pipelineLayoutDesc = wgpu.PipelineLayoutDescriptor{ .bind_group_layout_count = 1, .bind_group_layouts = self.bindGroupLayout };
-
-        // const pipelineLayout = self.gctx.device.createPipelineLayout(pipelineLayoutDesc);
-        // // // Create compute pipeline
-
-        // self.computePipeline = self.gctx.device.createComputePipeline(computePipelineDesc);
 
         const bindGroupLayouts: [1]zgpu.BindGroupLayoutHandle = .{self.bindGroupLayout};
         const pipelineLayout = self.gctx.createPipelineLayout(&bindGroupLayouts);
@@ -102,11 +88,11 @@ pub const Compute = struct {
         const mapBuffer: wgpu.Buffer = self.gctx.lookupResource(self.mapBuffer).?;
         // std.debug.print("Buffer map state: {}\n", .{mapBuffer.getMapState()});
 
-        const result = mapBuffer.getConstMappedRange(f32, 0, self.bufferSize);
+        const result = mapBuffer.getConstMappedRange(f32, 0, (self.bufferSize / 4));
         if (result) |res| {
-            std.debug.print("input: {} became {}\n", .{ 0.1, res[0] });
+            std.debug.print("Got mapped range! value: {} (un-inited)\n", .{res[0]});
         } else {
-            std.debug.print("GetMappedRange failed and returned null at the init\n", .{});
+            std.debug.print("GetConstMappedRange failed and returned null at the init\n", .{});
         }
 
         mapBuffer.unmap();
@@ -128,9 +114,6 @@ pub const Compute = struct {
             },
         };
 
-        // self.bindGroup = wgpu.BindGroup{
-        //     .layout = self.bindGroupLayout,
-        // };
         self.bindGroup = self.gctx.createBindGroup(self.bindGroupLayout, &binds);
     }
 
@@ -164,10 +147,7 @@ pub const Compute = struct {
         };
 
         const computePass = encoder.beginComputePass(computePassDesc);
-        defer {
-            // computePass.end();
-            computePass.release();
-        }
+        defer computePass.release();
 
         const computePipeline = self.gctx.lookupResource(self.computePipeline).?;
         const bind_group = self.gctx.lookupResource(self.bindGroup).?;
@@ -202,20 +182,23 @@ pub const Compute = struct {
         }
 
         const mapBuffer: wgpu.Buffer = self.gctx.lookupResource(self.mapBuffer).?;
-        mapBuffer.mapAsync(.{ .read = true }, 0, 0, print_callback, @ptrCast(self));
+        mapBuffer.mapAsync(.{ .read = true }, 0, 0, map_callback, @ptrCast(self));
         while (!self.mapped) {
             self.gctx.device.tick();
         }
 
         std.debug.print("Buffer map state: {s}\n", .{@tagName(mapBuffer.getMapState())});
-        std.debug.print("Buffer size: {}\n", .{mapBuffer.getSize()});
+        std.debug.print("Buffer size: {} - \n", .{mapBuffer.getSize()});
         std.debug.print("Buffer usage: {}\n", .{mapBuffer.getUsage()});
-        const result = mapBuffer.getMappedRange(f32, 0, self.bufferSize);
+
+        const result = mapBuffer.getConstMappedRange(f32, 0, (self.bufferSize / 4));
         if (result) |res| {
             std.debug.print("input: {} became {}\n", .{ 0.1, res[0] });
         } else {
             std.debug.print("GetMappedRange failed and returned null\n", .{});
         }
+
+        std.debug.print("\n", .{});
         mapBuffer.unmap();
         self.mapped = false;
         // std.debug.print("done with onCompute\n", .{});
@@ -231,8 +214,8 @@ fn compute_done(status: wgpu.QueueWorkDoneStatus, userdata: ?*anyopaque) callcon
     }
 }
 
-fn print_callback(status: wgpu.BufferMapAsyncStatus, userdata: ?*anyopaque) callconv(.C) void {
-    std.debug.print("Compute shader done! - status: {}\n", .{status});
+fn map_callback(status: wgpu.BufferMapAsyncStatus, userdata: ?*anyopaque) callconv(.C) void {
+    std.debug.print("Compute shader done! - buffer map status: {s}\n", .{@tagName(status)});
     const self = @as(*Compute, @ptrCast(@alignCast(userdata)));
     // const mapBuffer: wgpu.Buffer = self.gctx.lookupResource(self.mapBuffer).?;
 
