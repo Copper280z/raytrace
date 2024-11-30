@@ -65,6 +65,7 @@ pub const Compute = struct {
 
         // // Create input buffers
         var bufferDesc = wgpu.BufferDescriptor{
+            .label = "input",
             .mapped_at_creation = false,
             .size = self.bufferSize,
             .usage = .{
@@ -77,25 +78,27 @@ pub const Compute = struct {
 
         // Create output buffer: the only difference is the usage
         bufferDesc.usage = .{ .storage = true, .copy_src = true };
+        bufferDesc.label = "output";
         self.outputBuffer = self.gctx.createBuffer(bufferDesc);
 
         bufferDesc.usage = .{
             .copy_dst = true,
             .map_read = true,
         };
-        bufferDesc.mapped_at_creation = true;
+        // bufferDesc.mapped_at_creation = true;
+        bufferDesc.label = "map buffer";
         self.mapBuffer = self.gctx.createBuffer(bufferDesc);
-        const mapBuffer: wgpu.Buffer = self.gctx.lookupResource(self.mapBuffer).?;
-        // std.debug.print("Buffer map state: {}\n", .{mapBuffer.getMapState()});
+        // const mapBuffer: wgpu.Buffer = self.gctx.lookupResource(self.mapBuffer).?;
+        // // std.debug.print("Buffer map state: {}\n", .{mapBuffer.getMapState()});
 
-        const result = mapBuffer.getConstMappedRange(f32, 0, (self.bufferSize / 4));
-        if (result) |res| {
-            std.debug.print("Got mapped range! value: {} (un-inited)\n", .{res[0]});
-        } else {
-            std.debug.print("GetConstMappedRange failed and returned null at the init\n", .{});
-        }
+        // const result = mapBuffer.getConstMappedRange(f32, 0, (self.bufferSize / 4));
+        // if (result) |res| {
+        //     std.debug.print("Got mapped range! value: {} (un-inited)\n", .{res[0]});
+        // } else {
+        //     std.debug.print("GetConstMappedRange failed and returned null at the init\n", .{});
+        // }
 
-        mapBuffer.unmap();
+        // mapBuffer.unmap();
     }
 
     fn initBindGroup(self: *@This()) void {
@@ -161,11 +164,12 @@ pub const Compute = struct {
         computePass.dispatchWorkgroups(workgroupCount, 1, 1); // this calls the compute shader
 
         computePass.end();
+        const mapBuffer: wgpu.Buffer = self.gctx.lookupResource(self.mapBuffer).?;
 
         encoder.copyBufferToBuffer(
             self.gctx.lookupResource(self.outputBuffer).?,
             0,
-            self.gctx.lookupResource(self.mapBuffer).?,
+            mapBuffer,
             0,
             self.bufferSize,
         );
@@ -181,19 +185,17 @@ pub const Compute = struct {
             self.gctx.device.tick();
         }
 
-        const mapBuffer: wgpu.Buffer = self.gctx.lookupResource(self.mapBuffer).?;
-        mapBuffer.mapAsync(.{ .read = true }, 0, 0, map_callback, @ptrCast(self));
+        mapBuffer.mapAsync(.{ .read = true }, 0, self.bufferSize, map_callback, @ptrCast(self));
         while (!self.mapped) {
             self.gctx.device.tick();
         }
-
         std.debug.print("Buffer map state: {s}\n", .{@tagName(mapBuffer.getMapState())});
         std.debug.print("Buffer size: {} - \n", .{mapBuffer.getSize()});
         std.debug.print("Buffer usage: {}\n", .{mapBuffer.getUsage()});
 
         const result = mapBuffer.getConstMappedRange(f32, 0, (self.bufferSize / 4));
         if (result) |res| {
-            std.debug.print("input: {} became {}\n", .{ 0.1, res[0] });
+            std.debug.print("input: {} became {}\n", .{ 0.1, res[1] });
         } else {
             std.debug.print("GetMappedRange failed and returned null\n", .{});
         }
@@ -220,7 +222,7 @@ fn map_callback(status: wgpu.BufferMapAsyncStatus, userdata: ?*anyopaque) callco
     // const mapBuffer: wgpu.Buffer = self.gctx.lookupResource(self.mapBuffer).?;
 
     if (status == .success) {
-        // const result = mapBuffer.getMappedRange(f32, 0, 64).?;
+        // const result = mapBuffer.getConstMappedRange(f32, 0, 64).?;
         // std.debug.print("input: {} became {}\n", .{ 0.1, result[0] });
         // mapBuffer.unmap();
     } else {
