@@ -65,13 +65,35 @@ pub fn build(b: *std.Build) void {
     exe.root_module.addImport("ztracy", ztracy.module("root"));
     exe.linkLibrary(ztracy.artifact("tracy"));
 
-    if (target.result.os.tag == .macos) {
-        if (b.lazyDependency("system_sdk", .{})) |system_sdk| {
-            exe.addLibraryPath(system_sdk.path("macos12/usr/lib"));
-            exe.addSystemFrameworkPath(system_sdk.path("macos12/System/Library/Frameworks"));
-        }
+    switch (target.result.os.tag) {
+        .windows => {
+            if (target.result.cpu.arch.isX86()) {
+                if (target.result.abi.isGnu() or target.result.abi.isMusl()) {
+                    if (b.lazyDependency("system_sdk", .{})) |system_sdk| {
+                        exe.addLibraryPath(system_sdk.path("windows/lib/x86_64-windows-gnu"));
+                    }
+                }
+            }
+        },
+        .macos => {
+            if (b.lazyDependency("system_sdk", .{})) |system_sdk| {
+                exe.addLibraryPath(system_sdk.path("macos12/usr/lib"));
+                exe.addFrameworkPath(system_sdk.path("macos12/System/Library/Frameworks"));
+            }
+        },
+        .linux => {
+            if (target.result.cpu.arch.isX86()) {
+                // if (b.lazyDependency("system_sdk", .{})) |system_sdk| {
+                //     exe.addLibraryPath(system_sdk.path("linux/lib/x86_64-linux-gnu"));
+                // }
+            } else if (target.result.cpu.arch == .aarch64) {
+                if (b.lazyDependency("system_sdk", .{})) |system_sdk| {
+                    exe.addLibraryPath(system_sdk.path("linux/lib/aarch64-linux-gnu"));
+                }
+            }
+        },
+        else => {},
     }
-
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
     // step when running `zig build`).

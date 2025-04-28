@@ -66,7 +66,7 @@ pub const Compute = struct {
         // // Create input buffers
         var bufferDesc = wgpu.BufferDescriptor{
             .label = "input",
-            .mapped_at_creation = false,
+            .mapped_at_creation = .false,
             .size = self.bufferSize,
             .usage = .{
                 .storage = true,

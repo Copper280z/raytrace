@@ -71,6 +71,7 @@ const DemoState = struct {
     mouse: struct {
         cursor_pos: [2]f64 = .{ 0, 0 },
     } = .{},
+    world: rt.Hittable,
 };
 
 fn appendMesh(
@@ -93,7 +94,7 @@ fn appendMesh(
 }
 
 fn initWorldScene(
-    world: *const rt.Hittable,
+    world: rt.Hittable,
     allocator: std.mem.Allocator,
     drawables: *std.ArrayList(Drawable),
     meshes: *std.ArrayList(Mesh),
@@ -143,11 +144,17 @@ fn initWorldScene(
             .basecolor_roughness = .{ color[0], color[1], color[2], 0.2 },
         }) catch unreachable;
 
-        appendMesh(mesh, meshes, meshes_indices, meshes_positions, meshes_normals);
+        appendMesh(
+            mesh,
+            meshes,
+            meshes_indices,
+            meshes_positions,
+            meshes_normals,
+        );
     }
 }
 
-fn init(world: *const rt.Hittable, allocator: std.mem.Allocator, window: *zglfw.Window) !DemoState {
+fn init(world: rt.Hittable, allocator: std.mem.Allocator, window: *zglfw.Window) !DemoState {
     const gctx = try zgpu.GraphicsContext.create(
         allocator,
         .{
@@ -286,6 +293,7 @@ fn init(world: *const rt.Hittable, allocator: std.mem.Allocator, window: *zglfw.
         .depth_texture_view = depth.view,
         .meshes = meshes,
         .drawables = drawables,
+        .world = world,
     };
 }
 
@@ -296,7 +304,20 @@ fn deinit(allocator: std.mem.Allocator, demo: *DemoState) void {
     demo.* = undefined;
 }
 
-fn update(demo: *DemoState) void {
+fn start_trace(demo: *DemoState, allocator: std.mem.Allocator) !void {
+    const cam_pos: rt.vec_type = rt.loadArr3(demo.camera.position);
+    const cam_forward: rt.vec_type = rt.loadArr3(demo.camera.forward);
+    const cam_up: rt.vec_type = .{ cam_pos[0], cam_pos[1] + 1, cam_pos[2] };
+
+    const nx = 1200;
+    const ny = 675;
+    const aspect = @as(f32, @floatFromInt(nx)) / @as(f32, @floatFromInt(ny));
+    rt.cam.SetPosition(cam_pos, cam_forward, cam_up, 45, aspect);
+
+    try rt.render_and_write("Scene.ppm", demo.world, .{ .nx = nx, .ny = ny }, .ppm, allocator);
+}
+
+fn update(demo: *DemoState, allocator: std.mem.Allocator) !void {
     zgui.backend.newFrame(
         demo.gctx.swapchain_descriptor.width,
         demo.gctx.swapchain_descriptor.height,
@@ -318,7 +339,10 @@ fn update(demo: *DemoState) void {
 
         zgui.endGroup();
         zgui.beginGroup();
-        _ = zgui.button("Trace (not working)", .{ .w = 250, .h = 40 });
+        const do_trace = zgui.button("Trace (not working)", .{ .w = 250, .h = 40 });
+        if (do_trace) {
+            try start_trace(demo, allocator);
+        }
         zgui.endGroup();
     }
     zgui.end();
@@ -560,13 +584,13 @@ pub fn main() !void {
         std.posix.chdir(path) catch {};
     }
 
-    zglfw.windowHintTyped(.client_api, .no_api);
+    zglfw.windowHint(.client_api, .no_api);
 
     const window = try zglfw.Window.create(1600, 1000, window_title, null);
     defer window.destroy();
     window.setSizeLimits(400, 400, -1, -1);
 
-    var demo = try init(&World, allocator, window);
+    var demo = try init(World, allocator, window);
     defer deinit(allocator, &demo);
 
     const scale_factor = scale_factor: {
@@ -590,11 +614,11 @@ pub fn main() !void {
 
     zgui.getStyle().scaleAllSizes(scale_factor);
 
-    const computeShader = try compute.Compute.create(demo.gctx, allocator);
+    // const computeShader = try compute.Compute.create(demo.gctx, allocator);
     while (!window.shouldClose() and window.getKey(.escape) != .press) {
         zglfw.pollEvents();
-        update(&demo);
+        try update(&demo, arena.allocator());
         draw(&demo);
-        computeShader.onCompute();
+        // computeShader.onCompute();
     }
 }

@@ -9,11 +9,17 @@ pub const std_options: std.Options = .{
 };
 const log = std.log.scoped(.main);
 
-const vec_type = @Vector(3, f32);
+pub const vec_type = @Vector(3, f32);
 const vec3f = vector.Vector(vec_type);
 const Ray = ray.MakeRay(vec_type).Ray;
 const cam_types = cameras.MakeCamTypes(vec_type);
 
+pub inline fn f32x3(e0: f32, e1: f32, e2: f32) vec_type {
+    return .{ e0, e1, e2 };
+}
+pub inline fn loadArr3(arr: [3]f32) vec_type {
+    return f32x3(arr[0], arr[1], arr[2]);
+}
 pub const RndGen = std.Random.Sfc64;
 
 const Allocator = std.mem.Allocator;
@@ -576,39 +582,39 @@ pub fn render_and_write(fname: []const u8, world: Hittable, shape: shape_s, file
     var final_img = try std.ArrayList(@Vector(3, u8)).initCapacity(allocator, shape.nx * shape.ny);
     defer final_img.deinit();
 
-    if (std.Thread.getCpuCount()) |num_cpus| {
-        const img_type = std.ArrayList(@Vector(3, u8));
-        var thread_config = std.Thread.SpawnConfig{};
-        thread_config.allocator = allocator;
-        var threads = std.ArrayList(std.Thread).init(allocator);
-        var images = std.ArrayList(img_type).init(allocator);
-        for (0..num_cpus) |i| {
-            const img = try img_type.initCapacity(allocator, shape.nx * shape.ny);
-
-            try images.append(img);
-            const handle =
-                try std.Thread.spawn(thread_config, Render, .{ world, shape, i * 123, &images.items[i] });
-            try threads.append(handle);
-        }
-        std.debug.print("Started {} threads\n", .{num_cpus});
-
-        for (threads.items) |thread| {
-            thread.join();
-        }
-        std.debug.print("all threads finished in {d:.3} sec\n", .{@as(f32, @floatFromInt(std.time.milliTimestamp() - t0)) / 1000});
-
-        for (0..shape.nx * shape.ny) |idx| {
-            var tmp_pix: @Vector(3, u32) = .{ 0, 0, 0 };
-            for (images.items) |img| {
-                tmp_pix += @intCast(img.items[idx]);
-            }
-            // std.debug.print("pix: {d:.3},{d:.3},{d:.3}\n", .{ tmp_pix[0] / num_cpus, tmp_pix[1] / num_cpus, tmp_pix[2] / num_cpus });
-            try final_img.append(@intCast(tmp_pix / @as(@Vector(3, u32), @splat(@intCast(num_cpus)))));
-            // try final_img.append(images.items[0].items[idx]);
-        }
-    } else |_| {
-        try Render(world, shape, 123, &final_img);
-    }
+    // if (std.Thread.getCpuCount()) |num_cpus| {
+    //     const img_type = std.ArrayList(@Vector(3, u8));
+    //     var thread_config = std.Thread.SpawnConfig{};
+    //     thread_config.allocator = allocator;
+    //     var threads = std.ArrayList(std.Thread).init(allocator);
+    //     var images = std.ArrayList(*img_type).init(allocator);
+    //     for (0..num_cpus) |i| {
+    //         var img = try img_type.initCapacity(allocator, shape.nx * shape.ny);
+    //
+    //         try images.append(&img);
+    //         const handle =
+    //             try std.Thread.spawn(thread_config, Render, .{ world, shape, i * 123, &img });
+    //         try threads.append(handle);
+    //     }
+    //     std.debug.print("Started {} threads\n", .{num_cpus});
+    //
+    //     for (threads.items) |thread| {
+    //         thread.join();
+    //     }
+    //     std.debug.print("all threads finished in {d:.3} sec\n", .{@as(f32, @floatFromInt(std.time.milliTimestamp() - t0)) / 1000});
+    //
+    //     for (0..shape.nx * shape.ny) |idx| {
+    //         var tmp_pix: @Vector(3, u32) = .{ 0, 0, 0 };
+    //         for (images.items) |img| {
+    //             tmp_pix += @intCast(img.items[idx]);
+    //         }
+    //         // std.debug.print("pix: {d:.3},{d:.3},{d:.3}\n", .{ tmp_pix[0] / num_cpus, tmp_pix[1] / num_cpus, tmp_pix[2] / num_cpus });
+    //         try final_img.append(@intCast(tmp_pix / @as(@Vector(3, u32), @splat(@intCast(num_cpus)))));
+    //         // try final_img.append(images.items[0].items[idx]);
+    //     }
+    // } else |_| {
+    try Render(world, shape, 123, &final_img);
+    // }
     const t1 = std.time.milliTimestamp();
 
     std.debug.print("Took {d:.3} sec to render\n", .{@as(f32, @floatFromInt(t1 - t0)) / 1000});
