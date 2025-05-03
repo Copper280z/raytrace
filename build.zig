@@ -21,16 +21,21 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    // needed for 0.14.0 if C modules are compiled in debug mode, but zig code compiled in ReleaseFast
+    // exe.root_module.sanitize_c = true;
 
     const zglfw = b.dependency("zglfw", .{
         .target = target,
+        .optimize = optimize,
     });
+
     exe.root_module.addImport("zglfw", zglfw.module("root"));
     exe.linkLibrary(zglfw.artifact("glfw"));
 
     @import("zgpu").addLibraryPathsTo(exe);
     const zgpu = b.dependency("zgpu", .{
         .target = target,
+        .optimize = optimize,
     });
     exe.root_module.addImport("zgpu", zgpu.module("root"));
     exe.linkLibrary(zgpu.artifact("zdawn"));
@@ -38,29 +43,34 @@ pub fn build(b: *std.Build) void {
     const zgui = b.dependency("zgui", .{
         .target = target,
         .backend = .glfw_wgpu,
+        .optimize = optimize,
     });
     exe.root_module.addImport("zgui", zgui.module("root"));
     exe.linkLibrary(zgui.artifact("imgui"));
 
     const zmath = b.dependency("zmath", .{
         .target = target,
+        .optimize = optimize,
     });
     exe.root_module.addImport("zmath", zmath.module("root"));
 
     const zmesh = b.dependency("zmesh", .{
         .target = target,
+        .optimize = optimize,
     });
     exe.root_module.addImport("zmesh", zmesh.module("root"));
     exe.linkLibrary(zmesh.artifact("zmesh"));
 
     const znoise = b.dependency("znoise", .{
         .target = target,
+        .optimize = optimize,
     });
     exe.root_module.addImport("znoise", znoise.module("root"));
     exe.linkLibrary(znoise.artifact("FastNoiseLite"));
 
     const ztracy = b.dependency("ztracy", .{
         .target = target,
+        .optimize = optimize,
     });
     exe.root_module.addImport("ztracy", ztracy.module("root"));
     exe.linkLibrary(ztracy.artifact("tracy"));
