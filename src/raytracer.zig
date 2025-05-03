@@ -514,14 +514,14 @@ pub fn check_neg3(v: vec_type) void {
     //     @panic("Pixel value out of range! Negative!");
     // }
 }
-pub fn Render(world: Hittable, shape: shape_s, seed: u64, img: *std.ArrayList(@Vector(3, u8))) !void {
+pub fn Render(world: Hittable, num_samples: u16, shape: shape_s, seed: u64, img: *std.ArrayList(@Vector(3, u8))) !void {
     @setFloatMode(.optimized);
     var rnd = RndGen.init(seed);
     log.info("Starting ray trace", .{});
     for (0..shape.ny) |jr| {
         for (0..shape.nx) |i| {
             const j = shape.ny - jr;
-            const pix = trace(i, j, shape, rnd.random(), world);
+            const pix = trace(num_samples, i, j, shape, rnd.random(), world);
             check_nan3(pix);
             // std.debug.print("pix: {d:.3},{d:.3},{d:.3}\n", .{ pix[0], pix[1], pix[2] });
             const ipix: @Vector(3, u8) = @intFromFloat(@as(vec_type, @splat(255.99)) * pix);
@@ -531,7 +531,7 @@ pub fn Render(world: Hittable, shape: shape_s, seed: u64, img: *std.ArrayList(@V
     // return img;
 }
 
-pub fn trace(i: usize, j: usize, shape: shape_s, rng: anytype, world: Hittable) vec_type {
+pub fn trace(num_samples: u16, i: usize, j: usize, shape: shape_s, rng: anytype, world: Hittable) vec_type {
     var col: vec_type = .{ 0.0, 0.0, 0.0 };
     for (0..num_samples) |_| {
         const u: f32 = (@as(f32, @floatFromInt(i)) + rng.float(f32)) / @as(f32, @floatFromInt(shape.nx));
@@ -539,7 +539,7 @@ pub fn trace(i: usize, j: usize, shape: shape_s, rng: anytype, world: Hittable) 
         const r = cam.get_ray(u, v);
         col += color(r, world, 0, rng);
     }
-    const pix = col / vec3f.Splat(num_samples);
+    const pix = col / vec3f.Splat(@as(f32, @floatFromInt(num_samples)));
     check_nan3(pix);
     check_neg3(pix);
     const rt_pix = vec_type{
@@ -577,25 +577,27 @@ pub fn random_in_unit_sphere(rng: anytype) vec_type {
     return unit_sphere * vec3f.Splat(std.math.cbrt(rng.float(f32)));
 }
 
-pub fn render_and_write(fname: []const u8, world: Hittable, shape: shape_s, filetype: img_io.ImgType, allocator: Allocator) !void {
+pub fn render_and_write(fname: []const u8, num_samples: u16, world: Hittable, shape: shape_s, filetype: img_io.ImgType, allocator: Allocator) !void {
+    var local_arena = std.heap.ArenaAllocator.init(allocator);
+    defer local_arena.deinit();
+    const local_allocator = local_arena.allocator();
     const t0 = std.time.milliTimestamp();
-    var final_img = try std.ArrayList(@Vector(3, u8)).initCapacity(allocator, shape.nx * shape.ny);
+    var final_img = try std.ArrayList(@Vector(3, u8)).initCapacity(local_allocator, shape.nx * shape.ny);
     defer final_img.deinit();
 
     if (std.Thread.getCpuCount()) |num_cpus| {
         const img_type = std.ArrayList(@Vector(3, u8));
         var thread_config = std.Thread.SpawnConfig{};
-        thread_config.allocator = allocator;
-        var threads = std.ArrayList(std.Thread).init(allocator);
-        var images = std.ArrayList(*img_type).init(allocator);
+        thread_config.allocator = local_allocator;
+        var threads = std.ArrayList(std.Thread).init(local_allocator);
+        var images = try std.ArrayList(img_type).initCapacity(local_allocator, num_cpus);
         for (0..num_cpus) |i| {
-            const img = try allocator.create(img_type);
-            defer allocator.destroy(img);
-            img.* = try img_type.initCapacity(allocator, shape.nx * shape.ny);
+            const tmp = img_type.init(local_allocator);
+            try images.append(tmp);
+            try images.items[i].ensureTotalCapacityPrecise(shape.nx * shape.ny);
 
-            try images.append(img);
             const handle =
-                try std.Thread.spawn(thread_config, Render, .{ world, shape, i * 123, images.items[i] });
+                try std.Thread.spawn(thread_config, Render, .{ world, num_samples, shape, i * 123, &images.items[i] });
             try threads.append(handle);
         }
         std.debug.print("Started {} threads\n", .{num_cpus});
@@ -615,7 +617,7 @@ pub fn render_and_write(fname: []const u8, world: Hittable, shape: shape_s, file
             // try final_img.append(images.items[0].items[idx]);
         }
     } else |_| {
-        try Render(world, shape, 123, &final_img);
+        try Render(world, num_samples, shape, 123, &final_img);
     }
     const t1 = std.time.milliTimestamp();
 
@@ -709,12 +711,13 @@ pub var cam = cam_types.MovableCamera{};
 pub var BVHNodes: u32 = 0;
 pub const Hittable = HittableBVH([]const Sphere);
 // const Hittable = HittableList([]const Sphere);
-const num_samples = 8 / 8;
 
 pub fn main() !void {
     // comptime {
     //     @compileLog("Size of Sphere: ", @sizeOf(Sphere));
     // }
+    const num_samples: u16 = 8 / 8;
+
     std.debug.print("Treenode is {} bytes\n", .{@sizeOf(TreeNode)});
     std.debug.print("AABB is {} bytes\n", .{@sizeOf(AxisAlignedBBox)});
     std.debug.print("Branch Node is {} bytes\n", .{@sizeOf(BranchNode)});
@@ -736,5 +739,5 @@ pub fn main() !void {
     std.debug.print("World contains {} BVH Nodes\n", .{BVHNodes});
 
     log.info("Creating {} x {} image", .{ nx, ny });
-    try render_and_write("Scene.ppm", World, .{ .nx = nx, .ny = ny }, filetype, arena.allocator());
+    try render_and_write("Scene.ppm", num_samples, World, .{ .nx = nx, .ny = ny }, filetype, arena.allocator());
 }

@@ -304,7 +304,7 @@ fn deinit(allocator: std.mem.Allocator, demo: *DemoState) void {
     demo.* = undefined;
 }
 
-fn start_trace(demo: *DemoState, allocator: std.mem.Allocator) !void {
+fn start_trace(demo: *DemoState, num_samples: u16, allocator: std.mem.Allocator) !void {
     const cam_pos: rt.vec_type = rt.loadArr3(demo.camera.position);
     const cam_forward: rt.vec_type = rt.loadArr3(demo.camera.forward);
     const cam_up: rt.vec_type = .{ cam_pos[0], cam_pos[1] + 1, cam_pos[2] };
@@ -314,10 +314,10 @@ fn start_trace(demo: *DemoState, allocator: std.mem.Allocator) !void {
     const aspect = @as(f32, @floatFromInt(nx)) / @as(f32, @floatFromInt(ny));
     rt.cam.SetPosition(cam_pos, cam_forward, cam_up, 45, aspect);
 
-    try rt.render_and_write("Scene.ppm", demo.world, .{ .nx = nx, .ny = ny }, .ppm, allocator);
+    try rt.render_and_write("Scene.ppm", num_samples, demo.world, .{ .nx = nx, .ny = ny }, .ppm, allocator);
 }
 
-fn update(demo: *DemoState, allocator: std.mem.Allocator) !void {
+fn update(demo: *DemoState, arena: *std.heap.ArenaAllocator) !void {
     zgui.backend.newFrame(
         demo.gctx.swapchain_descriptor.width,
         demo.gctx.swapchain_descriptor.height,
@@ -341,8 +341,9 @@ fn update(demo: *DemoState, allocator: std.mem.Allocator) !void {
         zgui.beginGroup();
         const do_trace = zgui.button("Trace (not working)", .{ .w = 250, .h = 40 });
         if (do_trace) {
-            try start_trace(demo, allocator);
+            try start_trace(demo, 16, arena.allocator());
         }
+        zgui.text("memory in use: {}", .{arena.queryCapacity()});
         zgui.endGroup();
     }
     zgui.end();
@@ -572,7 +573,9 @@ pub fn main() !void {
     var fba = std.heap.FixedBufferAllocator.init(&mem);
     defer fba.reset();
     // const World = Hittable{ .objects = list[0..] };
-    const World = try rt.Random_Scene(11, rng.random(), arena.allocator(), fba.allocator());
+    var world_arena = std.heap.ArenaAllocator.init(allocator);
+    defer world_arena.deinit();
+    const World = try rt.Random_Scene(11, rng.random(), world_arena.allocator(), fba.allocator());
 
     try zglfw.init();
     defer zglfw.terminate();
@@ -617,8 +620,9 @@ pub fn main() !void {
     // const computeShader = try compute.Compute.create(demo.gctx, allocator);
     while (!window.shouldClose() and window.getKey(.escape) != .press) {
         zglfw.pollEvents();
-        try update(&demo, arena.allocator());
+        try update(&demo, &arena);
         draw(&demo);
+
         // computeShader.onCompute();
     }
 }
