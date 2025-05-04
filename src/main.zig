@@ -126,17 +126,17 @@ fn initWorldScene(
         // var mesh = zmesh.Shape.initParametricSphere(20 * @as(i32, @intFromFloat(@sqrt(radius / 10))), 20 * @as(i32, @intFromFloat(@sqrt(radius / 10))));
         var mesh: zmesh.Shape = undefined;
         if (radius > 50) {
-            mesh = zmesh.Shape.initParametricSphere(100, 100);
+            mesh = zmesh.Shape.initParametricSphere(150, 150);
         } else if (radius < 1.0) {
-            mesh = zmesh.Shape.initParametricSphere(10, 10);
-        } else {
             mesh = zmesh.Shape.initParametricSphere(20, 20);
+        } else {
+            mesh = zmesh.Shape.initParametricSphere(30, 30);
         }
         defer mesh.deinit();
         // mesh.rotate(math.pi * 0.5, 1.0, 0.0, 0.0);
         mesh.scale(radius, radius, radius);
         mesh.unweld();
-        mesh.computeNormals();
+        // mesh.computeNormals();
 
         drawables.append(.{
             .mesh_index = @as(u32, @intCast(meshes.items.len)),
@@ -339,9 +339,9 @@ fn update(demo: *DemoState, arena: *std.heap.ArenaAllocator) !void {
 
         zgui.endGroup();
         zgui.beginGroup();
-        const do_trace = zgui.button("Trace (not working)", .{ .w = 250, .h = 40 });
+        const do_trace = zgui.button("Trace", .{ .w = 250, .h = 40 });
         if (do_trace) {
-            try start_trace(demo, 16, arena.allocator());
+            try start_trace(demo, 200 / 8, arena.allocator());
         }
         zgui.text("memory in use: {}", .{arena.queryCapacity()});
         zgui.endGroup();
